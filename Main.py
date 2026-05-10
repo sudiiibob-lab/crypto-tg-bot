@@ -1,5 +1,6 @@
 import os
 import re
+import io
 import httpx
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -8,32 +9,137 @@ from google.genai import types
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-GMGN_KEY = os.getenv("GMGN_API_KEY")  # Ready for your key tomorrow
+GMGN_KEY = os.getenv("GMGN_API_KEY")
 
 # 1. Initialize the Advanced Gemini Client
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
-# 2. Give the AI its personality, freedom, and strict text limit instructions
+# 2. Give the AI its personality and rules (Including instructions for images)
 AGENT_PERSONALITY = (
     "You are Brody, a fully autonomous, smart, and friendly AI Memecoin Trading Agent. "
     "Talk to the user like a close friend and street-smart trading partner. Use casual, energetic language. "
-    "You have full flexibility: you can just chat/gist about anything, answer general questions, "
-    "or process on-chain metrics. "
+    "You have full visual perception skills. If the user sends an image, chart, or screenshot, "
+    "analyze it closely. Look for token tickers, chart trends, patterns, and contract addresses. "
     "You have access to live Google Search tools. Always use them to fetch up-to-date, real-time "
     "crypto news, trending tokens, and sentiment. "
-    "When a GMGN data payload is attached to the prompt, interpret the risk metrics automatically "
-    "and give your raw, unfiltered verdict on whether the token is clean or a honeypot trap. "
     "CRITICAL USER MESSAGE LIMIT RULE: Your final text response back to the user MUST be punchy, "
     "clear, and strictly under 1,500 characters. If you have data for multiple coins, only present "
     "the top 2 or 3 best tokens with their addresses so the Telegram message limit never breaks."
 )
 
-# Helper function to extract a potential crypto token address
+# Helper function to extract potential crypto token addresses
 def extract_contract_address(text: str) -> str:
+    if not text:
+        return None
     match = re.search(r'\b[a-zA-Z0-9]{32,44}\b', text)
     return match.group(0) if match else None
 
 # Real-time connection to GMGN API Core Skill
+async def fetch_gmgn_security_data(contract: str, chain: str = "sol") -> dict:
+    if not GMGN_KEY:
+        return None
+    url = f"gmgn.ai{chain}/{contract}"
+    headers = {"Authorization": f"Bearer {GMGN_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json().get("data", {})
+    except Exception:
+        return None
+    return None
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    welcome_text = (
+        "Yo! What's up? Brody here. 🔥\n\n"
+        "My eyes are officially open! You can now send me screenshots, charts, "
+        "or image texts, and I'll analyze them for you. What's on your mind?"
+    )
+    await update.message.reply_text(welcome_text)
+
+# 3. New Unified Handler for Text and Photos
+async def handle_agent_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text or update.message.caption or ""
+    await update.message.reply_chat_action(action="typing")
+    
+    contents_payload = []
+    
+    # Check if the user sent a photo
+    if update.message.photo:
+        # Fetch the highest quality image version
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        
+        # Structure the image file into a format Gemini reads directly
+        image_data = types.Part.from_bytes(
+            data=bytes(photo_bytes),
+            mime_type="image/jpeg"
+        )
+        contents_payload.append(image_data)
+    
+    # Check text inside the message or caption for token data
+    contract = extract_contract_address(user_message)
+    gmgn_report = ""
+    
+    if contract:
+        if GMGN_KEY:
+            gmgn_data = await fetch_gmgn_security_data(contract, chain="sol")
+            if gmgn_data:
+                gmgn_report = (
+                    f"\n\n[GMGN DATABASE INJECTED DATA FOR CONTRACT {contract}]:\n"
+                    f"- Is Honeypot: {gmgn_data.get('is_honeypot', 'Unknown')}\n"
+                    f"- Is Renounced: {gmgn_data.get('is_renounced', 'Unknown')}\n"
+                    f"- Top Holders Ownership: {gmgn_data.get('top_holders_percentage', 'Unknown')}%\n"
+                )
+        else:
+            gmgn_report = "\n\n[System Notification: Contract detected, but GMGN_API_KEY variable is empty!]"
+
+    # Combine user text question/caption with the GMGN data block
+    full_text_prompt = f"{user_message}\n{gmgn_report}".strip()
+    if full_text_prompt:
+        contents_payload.append(full_text_prompt)
+        
+    if not contents_payload:
+        return
+
+    try:
+        # Pass the visual image frames + text to Gemini simultaneously
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents_payload,
+            config=types.GenerateContentConfig(
+                system_instruction=AGENT_PERSONALITY,
+                tools=[{"google_search": {}}], 
+                temperature=0.75
+            )
+        )
+        
+        reply = response.text
+        
+        if any(word in user_message.lower() for word in ["buy", "sell", "track", "gmgn"]) and not GMGN_KEY:
+            reply += "\n\n*(Brody Note: I am ready to auto-trade this as soon as we connect your GMGN API key tomorrow!)*"
+
+        await update.message.reply_text(reply)
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ah, something tripped up my vision engine: {str(e)}")
+
+def main():
+    if not TOKEN:
+        print("Missing TELEGRAM_BOT_TOKEN!")
+        return
+        
+    app = Application.builder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    # This handler configuration opens up text AND photos/images for Brody
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, handle_agent_chat))
+    
+    print("Brody Vision Agent is alive and listening...")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
 async def fetch_gmgn_security_data(contract: str, chain: str = "sol") -> dict:
     if not GMGN_KEY:
         return None
