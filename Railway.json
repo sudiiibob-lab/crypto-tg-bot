@@ -1,0 +1,9 @@
+{
+  "$schema": "railway.app",
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "python Main.py"
+  }
+}
