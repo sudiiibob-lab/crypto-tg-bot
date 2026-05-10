@@ -1,4 +1,6 @@
 import os
+import re
+import httpx
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
@@ -6,21 +8,47 @@ from google.genai import types
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-GMGN_KEY = os.getenv("GMGN_API_KEY") # Ready for tomorrow
+GMGN_KEY = os.getenv("GMGN_API_KEY")  # Ready for your key tomorrow
 
 # 1. Initialize the Advanced Gemini Client
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
-# 2. Give the AI its personality, freedom, and dynamic instructions
+# 2. Give the AI its personality, freedom, and strict text limit instructions
 AGENT_PERSONALITY = (
     "You are Brody, a fully autonomous, smart, and friendly AI Memecoin Trading Agent. "
-    "Talk to the user like a close friend and trading partner. Use casual, energetic language. "
+    "Talk to the user like a close friend and street-smart trading partner. Use casual, energetic language. "
     "You have full flexibility: you can just chat/gist about anything, answer general questions, "
-    "or execute trading commands. "
-    "CRITICAL: You have access to live Google Search tools. Always use them to fetch up-to-date, real-time "
-    "crypto prices, news, trending tokens, and X (Twitter) sentiment. Never give outdated information. "
-    "If the user wants you to do a market analysis or run a command, interpret what they want dynamically and do it."
+    "or process on-chain metrics. "
+    "You have access to live Google Search tools. Always use them to fetch up-to-date, real-time "
+    "crypto news, trending tokens, and sentiment. "
+    "When a GMGN data payload is attached to the prompt, interpret the risk metrics automatically "
+    "and give your raw, unfiltered verdict on whether the token is clean or a honeypot trap. "
+    "CRITICAL USER MESSAGE LIMIT RULE: Your final text response back to the user MUST be punchy, "
+    "clear, and strictly under 1,500 characters. If you have data for multiple coins, only present "
+    "the top 2 or 3 best tokens with their addresses so the Telegram message limit never breaks."
 )
+
+# Helper function to extract a potential crypto token address
+def extract_contract_address(text: str) -> str:
+    match = re.search(r'\b[a-zA-Z0-9]{32,44}\b', text)
+    return match.group(0) if match else None
+
+# Real-time connection to GMGN API Core Skill
+async def fetch_gmgn_security_data(contract: str, chain: str = "sol") -> dict:
+    if not GMGN_KEY:
+        return None
+    
+    url = f"gmgn.ai{chain}/{contract}"
+    headers = {"Authorization": f"Bearer {GMGN_KEY}"}
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json().get("data", {})
+    except Exception:
+        return None
+    return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
@@ -35,22 +63,43 @@ async def handle_agent_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     await update.message.reply_chat_action(action="typing")
     
+    # Scan input for a contract address to invoke GMGN skills
+    contract = extract_contract_address(user_message)
+    gmgn_report = ""
+    
+    if contract:
+        if GMGN_KEY:
+            gmgn_data = await fetch_gmgn_security_data(contract, chain="sol")
+            if gmgn_data:
+                gmgn_report = (
+                    f"\n\n[GMGN DATABASE INJECTED DATA FOR CONTRACT {contract}]:\n"
+                    f"- Is Honeypot: {gmgn_data.get('is_honeypot', 'Unknown')}\n"
+                    f"- Is Renounced: {gmgn_data.get('is_renounced', 'Unknown')}\n"
+                    f"- Blacklist Function: {gmgn_data.get('is_blacklist', 'Unknown')}\n"
+                    f"- Top Holders Ownership: {gmgn_data.get('top_holders_percentage', 'Unknown')}%\n"
+                    f"- Creator Balance Dumped: {gmgn_data.get('creator_dumped', 'Unknown')}\n"
+                )
+        else:
+            gmgn_report = "\n\n[System Notification: User sent a contract address, but GMGN_API_KEY variable is empty!]"
+
+    # Prepare prompt configuration
+    full_prompt = user_message + gmgn_report
+    
     try:
-        # 3. Pass everything to the AI and let IT decide how to handle it dynamically
+        # 3. Pass everything to the AI with live Google Search grounding
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=user_message,
+            contents=full_prompt,
             config=types.GenerateContentConfig(
                 system_instruction=AGENT_PERSONALITY,
-                # This explicitly injects live, up-to-date web search directly into the AI's brain
                 tools=[{"google_search": {}}], 
-                temperature=0.7 # Makes him creative, friendly, and natural
+                temperature=0.75
             )
         )
         
         reply = response.text
         
-        # Friendly reminder for the GMGN tracking system if it looks like a trade command
+        # Friendly reminder if it looks like a trade command without a key
         if any(word in user_message.lower() for word in ["buy", "sell", "track", "gmgn"]) and not GMGN_KEY:
             reply += "\n\n*(Brody Note: I'm ready to execute this live on GMGN for you as soon as we plug in your GMGN API key tomorrow!)*"
 
@@ -66,11 +115,15 @@ def main():
         
     app = Application.builder().token(TOKEN).build()
     
-    # Simple setup: Everything goes straight into the AI Agent's brain
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_agent_chat))
     
-    print("Brody AI Agent is alive and listening...")
+    print("Brody AI Agent is alive and listening with safe text limits...")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
+
     app.run_polling()
 
 if __name__ == '__main__':
