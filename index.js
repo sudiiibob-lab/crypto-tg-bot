@@ -1,6 +1,5 @@
 import { Telegraf } from 'telegraf';
 import { GoogleGenAI } from '@google/genai';
-
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { JSONFilePreset } from 'lowdb/node';
@@ -76,7 +75,7 @@ bot.command('snipe', async (ctx) => {
 
     try {
         // Direct trade placement leveraging the GMGN skills interface values
-        const tradeResponse = await axios.post('gmgn.ai', {
+        const tradeResponse = await axios.post('https://gmgn.ai', {
             routingArgs: {
                 inputToken: "So11111111111111111111111111111111111111112",
                 outputToken: tokenMint,
