@@ -1,14 +1,13 @@
 {
   "name": "gngn-smart-agent",
   "version": "2.6.0",
-  "description": "AI Trading Agent running on native GMGN OpenAPI Skills via GitHub Link",
+  "description": "AI Trading Agent running on native GMGN OpenAPI Skills",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@gmgnai/gmgn-skills": "github:GMGNAI/gmgn-skills",
     "@google/generative-ai": "^0.2.1",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
