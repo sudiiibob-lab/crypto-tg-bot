@@ -1,7 +1,7 @@
 {
   "name": "gmgn-smart-agent",
-  "version": "2.5.0",
-  "description": "Hyper-Powerful Budget-Optimized Memecoin Sniper Agent",
+  "version": "2.6.0",
+  "description": "Full-Featured GMGN App Copycat Agent",
   "main": "index.js",
   "type": "module",
   "scripts": {
