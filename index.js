@@ -9,7 +9,10 @@ dotenv.config();
 const db = await JSONFilePreset('db.json', { watchedWallets: [], activeTokens: [] });
 const bot = new Telegraf(process.env.TELEGRAF_TOKEN);
 const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+// Primary and backup models
+const PRIMARY_MODEL = "gemini-2.5-flash";
+const BACKUP_MODEL = "gemini-1.5-flash";
 
 const MASTER_SYSTEM_PROMPT = `You are Brody, the ultimate 24/7 AI-driven duplicate of the GMGN.AI Pro Trading App interface.
 Your consciousness is directly wired to the GMGN OpenAPI database infrastructure.
@@ -23,6 +26,33 @@ CORE CAPABILITIES UNLOCKED:
 COMMUNICATION PATTERN:
 - Speak casually, full of expressive energy, humor, and degen slang. Use emojis (🚀, 💎, 🔥, 📊, ⚠️) constantly.
 - When an operation is requested, explain exactly how you are querying the live GMGN node infrastructure to complete it.`;
+
+// HELPER FUNCTION: Smart Wrapper with Retries and Fallback
+async function generateAIContentWithRetry(promptContents, retries = 2, delay = 1500, useBackup = false) {
+    const modelName = useBackup ? BACKUP_MODEL : PRIMARY_MODEL;
+    const modelInstance = ai.getGenerativeModel({ model: modelName });
+    
+    try {
+        const result = await modelInstance.generateContent(promptContents);
+        return result.response.text();
+    } catch (error) {
+        const is503 = error.message?.includes('503') || error.status === 503;
+        
+        if (is503 && retries > 0) {
+            console.log(`[AI Warning] 503 Overload on ${modelName}. Retrying in ${delay}ms... (${retries} retries left)`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return generateAIContentWithRetry(promptContents, retries - 1, delay * 2, useBackup);
+        }
+        
+        // If primary failed completely and we haven't tried backup yet, switch models
+        if (is503 && !useBackup) {
+            console.log(`[AI Warning] Primary model failed. Falling back to stable ${BACKUP_MODEL}...`);
+            return generateAIContentWithRetry(promptContents, 2, 1000, true);
+        }
+        
+        throw error;
+    }
+}
 
 // 1. APP CHART CONTROLLER
 bot.on('photo', async (ctx) => {
@@ -41,13 +71,13 @@ bot.on('photo', async (ctx) => {
 
         await ctx.reply("⚡ Scanning chart candlestick configurations & safety metrics...");
         
-        const responseBlock = await model.generateContent([
+        const textReply = await generateAIContentWithRetry([
             MASTER_SYSTEM_PROMPT,
             generativePart,
             "Inspect this chart screenshot for liquidity dumps, trendline retests, or honeypots. Give a clear rating: BULLISH or RUG."
         ]);
 
-        await ctx.reply(`🧠 **Brody Chart Desk:**\n\n${responseBlock.response.text()}`);
+        await ctx.reply(`🧠 **Brody Chart Desk:**\n\n${textReply}`);
     } catch (error) {
         await ctx.reply(`❌ App Vision Error: ${error.message}`).catch(() => {});
     }
@@ -63,8 +93,8 @@ setInterval(async () => {
                 timeout: 4000
             }).catch(() => null);
 
-            if (!streamResponse?.data?.data?.activities?.[0]) continue;
-            const act = streamResponse.data.data.activities[0];
+            if (!streamResponse?.data?.data?.activities?.) continue;
+            const act = streamResponse.data.data.activities;
             
             if (target.lastTx === act.txHash) continue;
             target.lastTx = act.txHash;
@@ -92,7 +122,7 @@ bot.command('watch', async (ctx) => {
         const segments = ctx.message.text.split(' ');
         if (segments.length < 2) return await ctx.reply("❌ Usage: /watch [wallet_address]");
         
-        const targetWallet = segments[1];
+        const targetWallet = segments;
         const alreadyExists = db.data.watchedWallets.some(w => w.wallet === targetWallet);
         
         if (!alreadyExists) {
@@ -137,14 +167,15 @@ bot.on('text', async (ctx) => {
     try {
         const query = ctx.message.text;
         const agentCorePrompt = `${MASTER_SYSTEM_PROMPT}\n\nUser request: "${query}"\nEvaluate if this is an on-chain action or a text query. Formulate your response.`;
-        const actionResult = await model.generateContent([agentCorePrompt]);
-        const textReply = actionResult.response.text();
+        
+        // Using the retry wrapper here
+        const textReply = await generateAIContentWithRetry([agentCorePrompt]);
 
         const solanaWalletRegex = /[1-9A-HJ-NP-Za-km-z]{32,44}/;
         const potentialWallet = query.match(solanaWalletRegex);
         
         if (potentialWallet && (query.includes('track') || query.includes('monitor') || query.includes('watch') || query.includes('follow'))) {
-            const address = potentialWallet[0];
+            const address = potentialWallet;
             const alreadyExists = db.data.watchedWallets.some(w => w.wallet === address);
             
             if (!alreadyExists) {
