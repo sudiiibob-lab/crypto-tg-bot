@@ -1,5 +1,6 @@
 import { Telegraf } from 'telegraf';
-import { GoogleGenAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
+
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { JSONFilePreset } from 'lowdb/node';
