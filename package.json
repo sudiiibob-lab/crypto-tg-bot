@@ -1,14 +1,13 @@
 {
   "name": "gngn-smart-agent",
   "version": "2.6.0",
-  "description": "AI Trading Agent powered by Telegraf, Gemini 2.5, and GMGN Skills",
+  "description": "AI Trading Agent powered by Telegraf and Gemini 2.5",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@gmgnai/gmgn-skills": "latest",
     "@google/generative-ai": "^0.2.1",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
