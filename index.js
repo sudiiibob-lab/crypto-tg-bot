@@ -44,7 +44,6 @@ async function generateAIContentWithRetry(promptContents, retries = 2, delay = 1
             return generateAIContentWithRetry(promptContents, retries - 1, delay * 2, useBackup);
         }
         
-        // If primary failed completely and we haven't tried backup yet, switch models
         if (is503 && !useBackup) {
             console.log(`[AI Warning] Primary model failed. Falling back to stable ${BACKUP_MODEL}...`);
             return generateAIContentWithRetry(promptContents, 2, 1000, true);
@@ -93,8 +92,8 @@ setInterval(async () => {
                 timeout: 4000
             }).catch(() => null);
 
-            if (!streamResponse?.data?.data?.activities?.) continue;
-            const act = streamResponse.data.data.activities;
+            if (!streamResponse?.data?.data?.activities?.[0]) continue;
+            const act = streamResponse.data.data.activities[0];
             
             if (target.lastTx === act.txHash) continue;
             target.lastTx = act.txHash;
@@ -122,7 +121,7 @@ bot.command('watch', async (ctx) => {
         const segments = ctx.message.text.split(' ');
         if (segments.length < 2) return await ctx.reply("❌ Usage: /watch [wallet_address]");
         
-        const targetWallet = segments;
+        const targetWallet = segments[1];
         const alreadyExists = db.data.watchedWallets.some(w => w.wallet === targetWallet);
         
         if (!alreadyExists) {
@@ -168,14 +167,13 @@ bot.on('text', async (ctx) => {
         const query = ctx.message.text;
         const agentCorePrompt = `${MASTER_SYSTEM_PROMPT}\n\nUser request: "${query}"\nEvaluate if this is an on-chain action or a text query. Formulate your response.`;
         
-        // Using the retry wrapper here
         const textReply = await generateAIContentWithRetry([agentCorePrompt]);
 
         const solanaWalletRegex = /[1-9A-HJ-NP-Za-km-z]{32,44}/;
         const potentialWallet = query.match(solanaWalletRegex);
         
         if (potentialWallet && (query.includes('track') || query.includes('monitor') || query.includes('watch') || query.includes('follow'))) {
-            const address = potentialWallet;
+            const address = potentialWallet[0];
             const alreadyExists = db.data.watchedWallets.some(w => w.wallet === address);
             
             if (!alreadyExists) {
